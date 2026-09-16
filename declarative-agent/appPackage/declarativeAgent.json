@@ -1,0 +1,39 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/copilot/declarative-agent/v1.8/schema.json",
+  "version": "v1.8",
+  "name": "Trial Intake Assistant",
+  "description": "Answers questions about clinical trial intake procedures from approved SOP documents in SharePoint.",
+  "instructions": "$[file('instruction.txt')]",
+  "conversation_starters": [
+    {
+      "title": "Screening criteria",
+      "text": "What are the inclusion and exclusion criteria for a phase II oncology trial?"
+    },
+    {
+      "title": "Consent process",
+      "text": "Walk me through the informed consent steps for a new participant."
+    },
+    {
+      "title": "Protocol deviation",
+      "text": "How do I document a protocol deviation?"
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "OneDriveAndSharePoint",
+      "items_by_url": [
+        {
+          "url": "https://contoso.sharepoint.com/sites/ClinicalOps/Shared%20Documents/SOPs"
+        }
+      ]
+    }
+  ],
+  "behavior_overrides": {
+    "special_instructions": {
+      "discourage_model_knowledge": true
+    }
+  },
+  "disclaimer": {
+    "text": "Responses are drawn from internal SOPs and are not medical advice. Confirm against the controlled document before acting."
+  }
+}

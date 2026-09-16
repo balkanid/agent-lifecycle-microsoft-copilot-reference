@@ -1,0 +1,35 @@
+{
+  "$comment": "Graph application permissions for the pipeline service principal. Apply with the az CLI or Terraform; see azure/PERMISSIONS.md for the roles that must accompany them.",
+  "resourceAppId": "00000003-0000-0000-c000-000000000000",
+  "resourceDisplayName": "Microsoft Graph",
+  "applicationPermissions": [
+    {
+      "value": "Application.ReadWrite.All",
+      "id": "1bfefb4e-e0b5-418b-a88f-73c46d2cc8e9",
+      "usedBy": "terraform/entra-agent-identity"
+    },
+    {
+      "value": "AppRoleAssignment.ReadWrite.All",
+      "id": "06b708a9-e830-4db3-a914-8e69da51d44f",
+      "usedBy": "terraform/entra-agent-identity - admin consent for the agent's own permissions"
+    },
+    {
+      "value": "CopilotPackages.Read.All",
+      "id": null,
+      "$comment": "Id varies by tenant rollout; resolve at apply time with `az ad sp show --id 00000003-0000-0000-c000-000000000000 --query \"appRoles[?value=='CopilotPackages.Read.All']\"`",
+      "usedBy": "scripts/discover_agents.py"
+    }
+  ],
+  "delegatedPermissions": [
+    {
+      "value": "AppCatalog.ReadWrite.All",
+      "usedBy": "scripts/publish_declarative_agent.py",
+      "$comment": "Delegated only - Graph does not support application permissions for app-catalog publish."
+    }
+  ],
+  "directoryRoles": [
+    "Power Platform Administrator",
+    "AI Administrator (required for CopilotPackages.Read.All)",
+    "Global Administrator (required only for direct app-catalog publish)"
+  ]
+}

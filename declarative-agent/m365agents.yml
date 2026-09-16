@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://aka.ms/m365-agents-toolkits/v1.12/yaml.schema.json
+#
+# Microsoft 365 Agents Toolkit project file for the declarative agent path.
+#
+# The gate does NOT live in here. Approval runs before atk is invoked at all -
+# see .github/workflows/cd.yml and scripts/terraform-local.sh. Putting the gate
+# inside m365agents.yml would tie it to one toolchain; keeping it outside means
+# the same gate protects `atk provision`, a Graph publish, and a manual sideload.
+version: v1.12
+environmentFolderPath: ./env
+
+provision:
+  - uses: teamsApp/create
+    with:
+      name: Trial Intake Assistant${{APP_NAME_SUFFIX}}
+    writeToEnvironmentFile:
+      teamsAppId: TEAMS_APP_ID
+
+  - uses: teamsApp/zipAppPackage
+    with:
+      manifestPath: ./appPackage/manifest.json
+      outputZipPath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+      outputFolder: ./appPackage/build
+
+  - uses: teamsApp/validateAppPackage
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+
+  - uses: teamsApp/update
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+
+  - uses: copilotAgent/publish
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+      scope: ${{AGENT_SCOPE}}
+    writeToEnvironmentFile:
+      titleId: M365_TITLE_ID
+      appId: M365_APP_ID
+      shareLink: SHARE_LINK
+
+publish:
+  - uses: teamsApp/zipAppPackage
+    with:
+      manifestPath: ./appPackage/manifest.json
+      outputZipPath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+      outputFolder: ./appPackage/build
+
+  - uses: teamsApp/validateAppPackage
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+
+  - uses: teamsApp/update
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+
+  # Scope comes from env/.env.<env> so it agrees with AGENT_SCOPE elsewhere. Agents
+  # with actions or API plugins can only be shared at personal scope.
+  - uses: copilotAgent/publish
+    with:
+      appPackagePath: ./appPackage/build/appPackage.${{TEAMSFX_ENV}}.zip
+      scope: ${{AGENT_SCOPE}}
+    writeToEnvironmentFile:
+      titleId: M365_PUBLISHED_TITLE_ID
+      appId: M365_PUBLISHED_APP_ID

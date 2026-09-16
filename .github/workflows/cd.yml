@@ -1,0 +1,213 @@
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: apply or destroy
+        type: choice
+        options: [apply, destroy]
+        default: apply
+      copilot_surface:
+        description: Which Copilot surface to provision
+        type: choice
+        options: [copilot-studio, declarative-agent]
+        default: copilot-studio
+      gate_backend:
+        description: Which system reviews the request
+        type: choice
+        options: [balkanid, sailpoint]
+        default: balkanid
+      entra_identity_gate:
+        description: Also gate the agent's Entra identity
+        type: boolean
+        default: false
+      provision_agent:
+        description: Provision after approval (false = gate only)
+        type: boolean
+        default: false
+      approval_wait_minutes:
+        description: Minutes to wait for approval before failing
+        default: "120"
+      agent_name:
+        description: Override AGENT_NAME for this run
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  lifecycle:
+    name: ${{ inputs.operation }} (${{ inputs.copilot_surface }})
+    runs-on: ubuntu-latest
+    environment: agent-lifecycle
+
+    env:
+      CD_OPERATION: ${{ inputs.operation }}
+      COPILOT_SURFACE: ${{ inputs.copilot_surface }}
+      GATE_BACKEND: ${{ inputs.gate_backend }}
+      ENTRA_IDENTITY_GATE: ${{ inputs.entra_identity_gate }}
+      AGENT_GATE: "true"
+      PROVISION_COPILOT_AGENT: ${{ inputs.provision_agent }}
+      PUBLISH_AGENT: ${{ inputs.provision_agent }}
+      APPROVAL_WAIT_MINUTES: ${{ inputs.approval_wait_minutes }}
+      AGENT_NAME: ${{ inputs.agent_name || vars.AGENT_NAME }}
+
+      BALKANID_PUBLIC_API_URL: ${{ vars.BALKANID_PUBLIC_API_URL }}
+      BALKANID_AGENT_OWNER_EMAIL: ${{ vars.BALKANID_AGENT_OWNER_EMAIL }}
+      INTEGRATION_ID: ${{ vars.BALKANID_INTEGRATION_ID }}
+      TRIGGER_INTEGRATION_SYNC: ${{ vars.TRIGGER_INTEGRATION_SYNC || 'true' }}
+      API_KEY_ID: ${{ secrets.BALKANID_API_KEY_ID }}
+      API_KEY_SECRET: ${{ secrets.BALKANID_API_KEY_SECRET }}
+
+      POWER_PLATFORM_ENVIRONMENT_ID: ${{ vars.POWER_PLATFORM_ENVIRONMENT_ID }}
+      DATAVERSE_ORG_URL: ${{ vars.DATAVERSE_ORG_URL }}
+      SOLUTION_UNIQUE_NAME: ${{ vars.SOLUTION_UNIQUE_NAME || 'BalkanIDAgentLifecycle' }}
+      SOLUTION_VERSION: ${{ vars.SOLUTION_VERSION || '1.0.0.0' }}
+      AGENT_SCHEMA_NAME: ${{ vars.AGENT_SCHEMA_NAME }}
+      ENTRA_GRAPH_PERMISSIONS: ${{ vars.ENTRA_GRAPH_PERMISSIONS }}
+      # Where download-artifact drops the packed solution. Without this the import
+      # resource count evaluates to 0 and the apply quietly creates no agent.
+      SOLUTION_ZIP_PATH: ${{ vars.SOLUTION_ZIP_PATH || 'build/BalkanIDAgentLifecycle_managed.zip' }}
+      DECLARATIVE_AGENT_PACKAGE: declarative-agent/appPackage/build/appPackage.zip
+      AGENT_SCOPE: ${{ vars.AGENT_SCOPE || 'personal' }}
+
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      SAILPOINT_MODE: ${{ vars.SAILPOINT_MODE || 'isc' }}
+      SAILPOINT_BASE_URL: ${{ vars.SAILPOINT_BASE_URL }}
+      SAILPOINT_ACCESS_ITEM_ID: ${{ vars.SAILPOINT_ACCESS_ITEM_ID }}
+      SAILPOINT_CLIENT_ID: ${{ secrets.SAILPOINT_CLIENT_ID }}
+      SAILPOINT_CLIENT_SECRET: ${{ secrets.SAILPOINT_CLIENT_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Install Power Platform CLI
+        if: inputs.provision_agent && inputs.copilot_surface == 'copilot-studio'
+        run: |
+          dotnet tool install --global Microsoft.PowerApps.CLI.Tool
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Download solution package
+        if: inputs.provision_agent && inputs.copilot_surface == 'copilot-studio'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: agent-solution
+          path: build
+
+      - name: Preflight
+        run: python scripts/preflight.py
+
+      # ---- Gates. Everything below is unreachable until a human approves. ----
+
+      - name: Entra identity gate
+        if: inputs.operation == 'apply' && inputs.entra_identity_gate && inputs.gate_backend == 'balkanid'
+        run: python scripts/entra_agent_identity_gate.py
+
+      - name: Agent access gate
+        if: inputs.operation == 'apply' && inputs.gate_backend == 'balkanid'
+        run: python scripts/gate.py
+
+      - name: Agent access gate (SailPoint)
+        if: inputs.operation == 'apply' && inputs.gate_backend == 'sailpoint'
+        run: python scripts/sailpoint_gate.py
+
+      # ---- Provisioning ----
+
+      # Local, ephemeral state: there is no destroy counterpart here, so repeated runs
+      # leave orphaned app registrations. Use a remote backend before relying on this
+      # beyond a demo. See "Production considerations" in the README.
+      - name: Terraform apply (Entra agent identity)
+        id: identity
+        if: inputs.operation == 'apply' && inputs.provision_agent && inputs.entra_identity_gate
+        working-directory: terraform/entra-agent-identity
+        run: |
+          perms=$(python3 -c 'import os, json; print(json.dumps([p.strip() for p in os.environ.get("ENTRA_GRAPH_PERMISSIONS", "").split(",") if p.strip()]))')
+          terraform init -input=false
+          terraform apply -auto-approve \
+            -var="tenant_id=$AZURE_TENANT_ID" \
+            -var="client_id=$AZURE_CLIENT_ID" \
+            -var="client_secret=$AZURE_CLIENT_SECRET" \
+            -var="agent_name=$AGENT_NAME" \
+            -var="graph_application_permissions=$perms"
+          echo "app_id=$(terraform output -raw application_id)" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform apply (Copilot Studio)
+        if: inputs.operation == 'apply' && inputs.provision_agent && inputs.copilot_surface == 'copilot-studio'
+        working-directory: terraform/copilot-studio
+        run: |
+          terraform init -input=false
+          terraform apply -auto-approve \
+            -var="tenant_id=$AZURE_TENANT_ID" \
+            -var="client_id=$AZURE_CLIENT_ID" \
+            -var="client_secret=$AZURE_CLIENT_SECRET" \
+            -var="environment_id=$POWER_PLATFORM_ENVIRONMENT_ID" \
+            -var="solution_zip_path=$(realpath -m "$GITHUB_WORKSPACE/${SOLUTION_ZIP_PATH#./}")" \
+            -var="solution_unique_name=$SOLUTION_UNIQUE_NAME" \
+            -var="solution_version=$SOLUTION_VERSION" \
+            -var="agent_schema_name=$AGENT_SCHEMA_NAME" \
+            -var="agent_application_id=${{ steps.identity.outputs.app_id }}"
+
+      - name: Terraform destroy (Copilot Studio)
+        if: inputs.operation == 'destroy' && inputs.copilot_surface == 'copilot-studio'
+        working-directory: terraform/copilot-studio
+        run: |
+          terraform init -input=false
+          terraform destroy -auto-approve \
+            -var="tenant_id=$AZURE_TENANT_ID" \
+            -var="client_id=$AZURE_CLIENT_ID" \
+            -var="client_secret=$AZURE_CLIENT_SECRET" \
+            -var="environment_id=$POWER_PLATFORM_ENVIRONMENT_ID"
+
+      # Declarative agents cannot be published unattended: Graph app-catalog publish
+      # supports delegated permissions only. CI packages and validates; a human runs
+      # scripts/publish_declarative_agent.py. See docs/TROUBLESHOOTING.md.
+      - name: Package declarative agent
+        if: inputs.operation == 'apply' && inputs.copilot_surface == 'declarative-agent'
+        env:
+          TEAMS_APP_ID: ${{ vars.TEAMS_APP_ID }}
+        run: |
+          if [ -z "$TEAMS_APP_ID" ]; then
+            echo "::error::TEAMS_APP_ID variable is not set. manifest.json templates it, and Graph rejects a package that still contains the placeholder."
+            exit 1
+          fi
+          cd declarative-agent/appPackage
+          mkdir -p build
+          # The placeholder is written as [$]{{...}} so GitHub Actions does not try to
+          # evaluate it as an expression before bash runs.
+          sed "s/[$]{{TEAMS_APP_ID}}/$TEAMS_APP_ID/g" manifest.json > build/manifest.json
+          cp declarativeAgent.json instruction.txt color.png outline.png build/
+          cd build
+          zip -q -r appPackage.zip manifest.json declarativeAgent.json instruction.txt color.png outline.png
+          echo "::notice::Package built. Graph app-catalog publish is delegated-only - run scripts/publish_declarative_agent.py interactively to publish."
+
+      - name: Upload declarative agent package
+        if: inputs.operation == 'apply' && inputs.copilot_surface == 'declarative-agent'
+        uses: actions/upload-artifact@v4
+        with:
+          name: declarative-agent-package
+          path: declarative-agent/appPackage/build/appPackage.zip
+
+      # ---- Governance ----
+
+      - name: Trigger BalkanID integration sync
+        if: inputs.operation == 'apply' && inputs.provision_agent
+        run: python scripts/trigger_sync.py
+
+      - name: Reconcile agent inventory
+        if: inputs.operation == 'apply'
+        continue-on-error: true
+        run: python scripts/discover_agents.py

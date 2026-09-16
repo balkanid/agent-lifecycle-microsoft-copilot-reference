@@ -1,0 +1,25 @@
+.env
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+
+# Solution build artefacts
+build/
+*.zip
+!**/appPackage/build/.gitkeep
+
+# Agents Toolkit
+declarative-agent/env/.env.*.user
+declarative-agent/appPackage/build/
+
+# Power Platform CLI
+.pac/
+
+__pycache__/
+*.pyc
+.DS_Store
+.ruff_cache/

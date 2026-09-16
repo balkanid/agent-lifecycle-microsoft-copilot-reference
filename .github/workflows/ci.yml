@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile
+        run: python -m compileall -q scripts
+
+      - name: Import smoke test
+        run: python scripts/verify_imports.py
+
+      - name: Lint
+        run: |
+          pip install --quiet ruff
+          ruff check scripts
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir:
+          - terraform
+          - terraform/copilot-studio
+          - terraform/entra-agent-identity
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Format check
+        run: terraform fmt -check -recursive ${{ matrix.dir }}
+
+      - name: Init
+        run: terraform -chdir=${{ matrix.dir }} init -backend=false -input=false
+
+      - name: Validate
+        run: terraform -chdir=${{ matrix.dir }} validate
+
+  manifests:
+    name: Agent manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON and YAML
+        run: |
+          python - <<'PY'
+          import json, sys, pathlib
+          for path in [
+              "declarative-agent/appPackage/manifest.json",
+              "declarative-agent/appPackage/declarativeAgent.json",
+          ]:
+              json.loads(pathlib.Path(path).read_text())
+              print("ok", path)
+          PY
+
+      - name: Check declarative agent manifest shape
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          da = json.loads(pathlib.Path("declarative-agent/appPackage/declarativeAgent.json").read_text())
+          missing = [k for k in ("version", "name", "description", "instructions") if k not in da]
+          if missing:
+              sys.exit(f"declarativeAgent.json missing required fields: {missing}")
+          if not da["$schema"].endswith(f'{da["version"]}/schema.json'):
+              sys.exit("$schema and version disagree")
+
+          app = json.loads(pathlib.Path("declarative-agent/appPackage/manifest.json").read_text())
+          agents = app.get("copilotAgents", {}).get("declarativeAgents", [])
+          if not agents:
+              sys.exit("manifest.json has no copilotAgents.declarativeAgents entry")
+          referenced = {a["file"] for a in agents}
+          if "declarativeAgent.json" not in referenced:
+              sys.exit(f"manifest references {referenced}, not declarativeAgent.json")
+          print("manifest shape ok")
+          PY
+
+  shell:
+    name: Shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck scripts/*.sh

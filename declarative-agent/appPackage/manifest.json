@@ -1,0 +1,38 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.30/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.30",
+  "version": "1.0.0",
+  "id": "${{TEAMS_APP_ID}}",
+  "developer": {
+    "name": "Contoso Clinical Operations",
+    "websiteUrl": "https://contoso.example.com",
+    "privacyUrl": "https://contoso.example.com/privacy",
+    "termsOfUseUrl": "https://contoso.example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Trial Intake Assistant",
+    "full": "Clinical Trial Intake Assistant"
+  },
+  "description": {
+    "short": "Answers clinical trial intake questions from approved SOPs.",
+    "full": "Answers questions about clinical trial intake procedures using the approved standard operating procedures held in SharePoint. Provisioned through an approval-gated pipeline so the identity team has a record of who owns it and what it can read."
+  },
+  "accentColor": "#243E63",
+  "copilotAgents": {
+    "declarativeAgents": [
+      {
+        "id": "declarativeAgent",
+        "file": "declarativeAgent.json"
+      }
+    ]
+  },
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}
