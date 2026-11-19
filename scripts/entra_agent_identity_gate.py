@@ -129,7 +129,6 @@ def create_input(owner: str, integration_id: str, name: str) -> dict:
                 "provisioningOption": "app",
                 "integrationId": integration_id,
                 "sourceType": env_optional("ENTRA_SOURCE_TYPE", "entra service principal"),
-                "identityType": "service account",
                 "name": name,
                 "scimPayload": scim_payload,
             }
